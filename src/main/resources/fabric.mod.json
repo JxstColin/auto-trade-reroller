@@ -1,0 +1,24 @@
+{
+	"schemaVersion": 1,
+	"id": "auto-trade-reroller",
+	"version": "${version}",
+	"name": "Auto Trade Reroller",
+	"description": "Client-side villager trade rerolling: cycles a job site block and prints the freshly rolled trades to chat.",
+	"authors": [
+		"jxstcolin"
+	],
+	"license": "CC0-1.0",
+	"icon": "assets/auto-trade-reroller/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"de.jxstcolin.client.AutoTradeRerollerClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
