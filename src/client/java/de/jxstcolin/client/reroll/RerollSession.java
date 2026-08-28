@@ -58,6 +58,7 @@ public final class RerollSession {
 	private static final double JUMP_SPEED = 0.42;
 	private static final double FETCH_TOLERANCE = 0.25;
 	private static final double RETURN_TOLERANCE = 0.4;
+	private static final double CLEAR_DISTANCE = 1.2;
 
 	private static final Direction[] PLACEMENT_ORDER = {
 			Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
@@ -149,6 +150,7 @@ public final class RerollSession {
 			case AWAIT_ITEM -> tickAwaitItem(level, gameMode, player);
 			case FETCH -> tickFetch(level, player);
 			case RETURN -> tickReturn(player);
+			case STEP_ASIDE -> tickStepAside(player);
 			case PLACE -> tickPlace(level, gameMode, player);
 			case AWAIT_PLACED -> tickAwaitPlaced(level, gameMode, player);
 			case INTERACT -> tickInteract(gameMode, player, villager);
@@ -254,6 +256,38 @@ public final class RerollSession {
 		}
 	}
 
+	private void tickStepAside(LocalPlayer player) {
+		if (!standingInTheWay(player)) {
+			stopWalking(player);
+			walkOrigin = player.position();
+			enter(Phase.PLACE);
+			return;
+		}
+
+		walkTowards(player, clearSpot(player), 0.0);
+	}
+
+	private boolean standingInTheWay(LocalPlayer player) {
+		return player.getBoundingBox().intersects(new AABB(pos));
+	}
+
+	private Vec3 clearSpot(LocalPlayer player) {
+		Vec3 center = Vec3.atCenterOf(pos);
+		Vec3 away = new Vec3(player.getX() - center.x, 0.0, player.getZ() - center.z);
+
+		if (away.lengthSqr() < 1.0E-4) {
+			Vec3 look = player.getViewVector(1.0F);
+			away = new Vec3(look.x, 0.0, look.z);
+		}
+
+		if (away.lengthSqr() < 1.0E-4) {
+			away = new Vec3(1.0, 0.0, 0.0);
+		}
+
+		away = away.normalize().scale(CLEAR_DISTANCE);
+		return new Vec3(center.x + away.x, player.getY(), center.z + away.z);
+	}
+
 	private static boolean walkTowards(LocalPlayer player, Vec3 target, double tolerance) {
 		double dx = target.x - player.getX();
 		double dz = target.z - player.getZ();
@@ -291,6 +325,11 @@ public final class RerollSession {
 	private void tickPlace(ClientLevel level, MultiPlayerGameMode gameMode, LocalPlayer player) {
 		if (!holdingWorkstation(player)) {
 			enter(Phase.AWAIT_ITEM);
+			return;
+		}
+
+		if (standingInTheWay(player)) {
+			enter(Phase.STEP_ASIDE);
 			return;
 		}
 
@@ -704,8 +743,9 @@ public final class RerollSession {
 		AWAIT_ITEM(60, "The job site block never made it back into the hotbar."),
 		FETCH(200, "Could not reach the dropped job site block.", true),
 		RETURN(200, "Could not walk back to the starting spot.", true),
+		STEP_ASIDE(200, "Standing where the job site block goes and could not step off it.", true),
 		PLACE(40, "Could not place the job site block."),
-		AWAIT_PLACED(60, "The server refused the placement."),
+		AWAIT_PLACED(200, "The server kept refusing the placement - is something standing in that block?"),
 		INTERACT(40, "Could not right-click the villager."),
 		AWAIT_TRADES(200, "The villager offered no trades - did it claim the job site block?"),
 		AWAIT_DECISION(0, "");

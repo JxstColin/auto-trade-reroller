@@ -78,6 +78,10 @@ easily land just out of reach. When that happens the loop walks your character o
 item, picks it up, and walks back to the exact spot you were standing on before carrying
 on. It says so once, the first time it has to do it.
 
+Before placing, the mod checks whether you are standing in the block the job site goes
+into - after walking to the drop you usually are, and Minecraft refuses to place a block
+you occupy. It then steps off to the edge first and remembers that spot for the next round.
+
 The walk is bounded: it gives up if the item ended up more than three blocks above or below
 you, or if it would have to leave a ten block radius around the job site block. `/atr start`
 also warns up front when you are standing far enough away that drops will regularly miss
