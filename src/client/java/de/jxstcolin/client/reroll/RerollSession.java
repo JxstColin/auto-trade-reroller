@@ -50,7 +50,14 @@ public final class RerollSession {
 	private static final int PLACE_RETRY_TICKS = 10;
 	private static final int PLACE_CONFIRM_TICKS = 5;
 	private static final int INTERACT_RETRY_TICKS = 20;
-	private static final double DROP_SEARCH_RANGE = 4.0;
+	private static final double DROP_SEARCH_RANGE = 6.0;
+	private static final int PICKUP_GRACE_TICKS = 20;
+	private static final double FETCH_REACH = 10.0;
+	private static final double FETCH_MAX_DROP = 3.0;
+	private static final double WALK_SPEED = 0.2;
+	private static final double JUMP_SPEED = 0.42;
+	private static final double FETCH_TOLERANCE = 0.25;
+	private static final double RETURN_TOLERANCE = 0.4;
 
 	private static final Direction[] PLACEMENT_ORDER = {
 			Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
@@ -68,7 +75,8 @@ public final class RerollSession {
 	private int cycles;
 	private boolean finished;
 	private boolean continueRequested;
-	private boolean dropHintShown;
+	private boolean walkHintShown;
+	private Vec3 walkOrigin;
 
 	public RerollSession(LocalPlayer player, Block workstation, BlockPos pos, Villager villager, Wish wish) {
 		this.workstation = workstation;
@@ -120,7 +128,9 @@ public final class RerollSession {
 				return;
 			}
 
-			if (player.distanceToSqr(Vec3.atCenterOf(pos)) > REACH * REACH) {
+			double limit = phase.walking ? FETCH_REACH : REACH;
+
+			if (player.distanceToSqr(Vec3.atCenterOf(pos)) > limit * limit) {
 				abort(Component.literal("Moved too far away from the job site block."));
 				return;
 			}
@@ -137,6 +147,8 @@ public final class RerollSession {
 			case BREAK -> tickBreak(level, gameMode, player);
 			case BREAKING -> tickBreaking(level, gameMode, player);
 			case AWAIT_ITEM -> tickAwaitItem(level, gameMode, player);
+			case FETCH -> tickFetch(level, player);
+			case RETURN -> tickReturn(player);
 			case PLACE -> tickPlace(level, gameMode, player);
 			case AWAIT_PLACED -> tickAwaitPlaced(level, gameMode, player);
 			case INTERACT -> tickInteract(gameMode, player, villager);
@@ -175,7 +187,7 @@ public final class RerollSession {
 		int slot = inventorySlot(player);
 
 		if (slot < 0) {
-			waitOutDrop(level);
+			considerFetching(level, player);
 			return;
 		}
 
@@ -191,26 +203,76 @@ public final class RerollSession {
 		enter(Phase.PLACE);
 	}
 
-	private void waitOutDrop(ClientLevel level) {
+	private void considerFetching(ClientLevel level, LocalPlayer player) {
+		if (phaseTicks < PICKUP_GRACE_TICKS) {
+			return;
+		}
+
 		ItemEntity drop = nearbyDrop(level);
 
 		if (drop == null) {
 			return;
 		}
 
-		phaseTicks = 0;
-
-		if (!dropHintShown) {
-			dropHintShown = true;
-			Chat.info(Component.empty()
+		if (Math.abs(drop.getY() - player.getY()) > FETCH_MAX_DROP) {
+			abort(Component.empty()
 					.append(workstation.getName())
-					.append(Component.literal(" landed out of reach at ")
-							.withStyle(ChatFormatting.GRAY))
-					.append(Component.literal(String.format("%.1f %.1f %.1f",
-							drop.getX(), drop.getY(), drop.getZ())).withStyle(ChatFormatting.WHITE))
-					.append(Component.literal(". Step over and pick it up, the loop continues by itself.")
-							.withStyle(ChatFormatting.GRAY)));
+					.append(Component.literal(" fell too far to walk after it.")));
+			return;
 		}
+
+		walkOrigin = player.position();
+		enter(Phase.FETCH);
+
+		if (walkHintShown) {
+			return;
+		}
+
+		walkHintShown = true;
+		Chat.info(Component.empty()
+				.append(Component.literal("Walking over to pick up the ").withStyle(ChatFormatting.GRAY))
+				.append(workstation.getName())
+				.append(Component.literal(".").withStyle(ChatFormatting.GRAY)));
+	}
+
+	private void tickFetch(ClientLevel level, LocalPlayer player) {
+		ItemEntity drop = nearbyDrop(level);
+
+		if (inventorySlot(player) >= 0 || drop == null) {
+			stopWalking(player);
+			enter(Phase.RETURN);
+			return;
+		}
+
+		walkTowards(player, drop.position(), FETCH_TOLERANCE);
+	}
+
+	private void tickReturn(LocalPlayer player) {
+		if (walkTowards(player, walkOrigin, RETURN_TOLERANCE)) {
+			stopWalking(player);
+			enter(Phase.AWAIT_ITEM);
+		}
+	}
+
+	private static boolean walkTowards(LocalPlayer player, Vec3 target, double tolerance) {
+		double dx = target.x - player.getX();
+		double dz = target.z - player.getZ();
+		double distance = Math.sqrt(dx * dx + dz * dz);
+
+		if (distance <= tolerance) {
+			return true;
+		}
+
+		double step = Math.min(WALK_SPEED, distance);
+		Vec3 motion = player.getDeltaMovement();
+		double rise = player.horizontalCollision && player.onGround() ? JUMP_SPEED : motion.y;
+		player.setDeltaMovement(dx / distance * step, rise, dz / distance * step);
+		return false;
+	}
+
+	private static void stopWalking(LocalPlayer player) {
+		Vec3 motion = player.getDeltaMovement();
+		player.setDeltaMovement(0.0, motion.y, 0.0);
 	}
 
 	private ItemEntity nearbyDrop(ClientLevel level) {
@@ -521,7 +583,6 @@ public final class RerollSession {
 		phaseTicks = 0;
 
 		continueRequested = false;
-		dropHintShown = false;
 	}
 
 	private void abort(Component reason) {
@@ -544,6 +605,7 @@ public final class RerollSession {
 		}
 
 		if (client.player != null) {
+			stopWalking(client.player);
 			client.player.getInventory().setSelectedSlot(originalSlot);
 		}
 	}
@@ -640,6 +702,8 @@ public final class RerollSession {
 		BREAK(40, "Could not start breaking the job site block."),
 		BREAKING(600, "Breaking the job site block took too long - out of reach or protected?"),
 		AWAIT_ITEM(60, "The job site block never made it back into the hotbar."),
+		FETCH(200, "Could not reach the dropped job site block.", true),
+		RETURN(200, "Could not walk back to the starting spot.", true),
 		PLACE(40, "Could not place the job site block."),
 		AWAIT_PLACED(60, "The server refused the placement."),
 		INTERACT(40, "Could not right-click the villager."),
@@ -648,10 +712,16 @@ public final class RerollSession {
 
 		private final int timeoutTicks;
 		private final String timeoutMessage;
+		private final boolean walking;
 
 		Phase(int timeoutTicks, String timeoutMessage) {
+			this(timeoutTicks, timeoutMessage, false);
+		}
+
+		Phase(int timeoutTicks, String timeoutMessage, boolean walking) {
 			this.timeoutTicks = timeoutTicks;
 			this.timeoutMessage = timeoutMessage;
+			this.walking = walking;
 		}
 	}
 }

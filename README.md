@@ -71,10 +71,17 @@ mode prints.
 ## Picking the block back up
 
 The dropped block is looked for in your whole inventory, and pulled back into the hotbar if
-it landed in the backpack. If it drops somewhere you cannot reach, the loop does not give
-up - it says where the item is and waits until you have walked over and grabbed it, then
-carries on. `/atr start` warns you up front when you are standing far enough from the job
-site block that this is likely.
+it landed in the backpack.
+
+Minecraft only hands you an item that touches your hitbox plus one block, so a drop can
+easily land just out of reach. When that happens the loop walks your character over to the
+item, picks it up, and walks back to the exact spot you were standing on before carrying
+on. It says so once, the first time it has to do it.
+
+The walk is bounded: it gives up if the item ended up more than three blocks above or below
+you, or if it would have to leave a ten block radius around the job site block. `/atr start`
+also warns up front when you are standing far enough away that drops will regularly miss
+you - standing closer avoids the detour entirely.
 
 ## Tools
 
