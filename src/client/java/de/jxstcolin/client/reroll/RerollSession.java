@@ -16,6 +16,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.ContainerInput;
@@ -26,6 +27,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.item.trading.MerchantOffer;
 import net.minecraft.world.item.trading.MerchantOffers;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
@@ -48,6 +50,7 @@ public final class RerollSession {
 	private static final int PLACE_RETRY_TICKS = 10;
 	private static final int PLACE_CONFIRM_TICKS = 5;
 	private static final int INTERACT_RETRY_TICKS = 20;
+	private static final double DROP_SEARCH_RANGE = 4.0;
 
 	private static final Direction[] PLACEMENT_ORDER = {
 			Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.UP
@@ -58,19 +61,22 @@ public final class RerollSession {
 	private final int villagerId;
 	private final Direction breakFace;
 	private final int originalSlot;
+	private final Wish wish;
 
 	private Phase phase = Phase.BREAK;
 	private int phaseTicks;
 	private int cycles;
 	private boolean finished;
 	private boolean continueRequested;
+	private boolean dropHintShown;
 
-	public RerollSession(LocalPlayer player, Block workstation, BlockPos pos, Villager villager) {
+	public RerollSession(LocalPlayer player, Block workstation, BlockPos pos, Villager villager, Wish wish) {
 		this.workstation = workstation;
 		this.pos = pos.immutable();
 		this.villagerId = villager.getId();
 		this.breakFace = Direction.getApproximateNearest(player.getEyePosition().subtract(Vec3.atCenterOf(pos)));
 		this.originalSlot = player.getInventory().getSelectedSlot();
+		this.wish = wish;
 	}
 
 	public BlockPos workstationPos() {
@@ -130,7 +136,7 @@ public final class RerollSession {
 		switch (phase) {
 			case BREAK -> tickBreak(level, gameMode, player);
 			case BREAKING -> tickBreaking(level, gameMode, player);
-			case AWAIT_ITEM -> tickAwaitItem(player);
+			case AWAIT_ITEM -> tickAwaitItem(level, gameMode, player);
 			case PLACE -> tickPlace(level, gameMode, player);
 			case AWAIT_PLACED -> tickAwaitPlaced(level, gameMode, player);
 			case INTERACT -> tickInteract(gameMode, player, villager);
@@ -165,10 +171,16 @@ public final class RerollSession {
 		player.swing(InteractionHand.MAIN_HAND);
 	}
 
-	private void tickAwaitItem(LocalPlayer player) {
-		int slot = hotbarSlot(player);
+	private void tickAwaitItem(ClientLevel level, MultiPlayerGameMode gameMode, LocalPlayer player) {
+		int slot = inventorySlot(player);
 
 		if (slot < 0) {
+			waitOutDrop(level);
+			return;
+		}
+
+		if (!Inventory.isHotbarSlot(slot)) {
+			swapIntoHotbar(gameMode, player, slot);
 			return;
 		}
 
@@ -177,6 +189,41 @@ public final class RerollSession {
 		}
 
 		enter(Phase.PLACE);
+	}
+
+	private void waitOutDrop(ClientLevel level) {
+		ItemEntity drop = nearbyDrop(level);
+
+		if (drop == null) {
+			return;
+		}
+
+		phaseTicks = 0;
+
+		if (!dropHintShown) {
+			dropHintShown = true;
+			Chat.info(Component.empty()
+					.append(workstation.getName())
+					.append(Component.literal(" landed out of reach at ")
+							.withStyle(ChatFormatting.GRAY))
+					.append(Component.literal(String.format("%.1f %.1f %.1f",
+							drop.getX(), drop.getY(), drop.getZ())).withStyle(ChatFormatting.WHITE))
+					.append(Component.literal(". Step over and pick it up, the loop continues by itself.")
+							.withStyle(ChatFormatting.GRAY)));
+		}
+	}
+
+	private ItemEntity nearbyDrop(ClientLevel level) {
+		Item item = workstation.asItem();
+		AABB area = new AABB(pos).inflate(DROP_SEARCH_RANGE);
+
+		for (ItemEntity entity : level.getEntitiesOfClass(ItemEntity.class, area)) {
+			if (entity.isAlive() && entity.getItem().getItem() == item) {
+				return entity;
+			}
+		}
+
+		return null;
 	}
 
 	private void tickPlace(ClientLevel level, MultiPlayerGameMode gameMode, LocalPlayer player) {
@@ -229,10 +276,26 @@ public final class RerollSession {
 			}
 
 			cycles++;
-			printOffers(villager, menu, offers);
+
+			if (wish == null) {
+				printOffers(villager, menu, offers);
+				player.closeContainer();
+				enter(Phase.AWAIT_DECISION);
+				printDecisionHint();
+				return;
+			}
+
+			MerchantOffer hit = wish.findIn(offers);
 			player.closeContainer();
-			enter(Phase.AWAIT_DECISION);
-			printDecisionHint();
+
+			if (hit != null) {
+				printMatch(villager, menu, offers);
+				finish();
+				return;
+			}
+
+			printMiss();
+			enter(Phase.BREAK);
 			return;
 		}
 
@@ -302,6 +365,23 @@ public final class RerollSession {
 		for (int index = 0; index < shown; index++) {
 			Chat.raw(TradeFormat.offer(index + 1, offers.get(index)));
 		}
+	}
+
+	private void printMatch(Villager villager, MerchantMenu menu, MerchantOffers offers) {
+		Chat.info(Component.empty()
+				.append(Component.literal("Match after " + cycles + (cycles == 1 ? " reroll" : " rerolls") + "! ")
+						.withStyle(ChatFormatting.GREEN))
+				.append(profession(villager))
+				.append(Component.literal(" (level " + menu.getTraderLevel() + "), stopped here.")
+						.withStyle(ChatFormatting.GRAY)));
+
+		for (int index = 0; index < offers.size(); index++) {
+			Chat.raw(TradeFormat.offer(index + 1, offers.get(index)));
+		}
+	}
+
+	private void printMiss() {
+		Chat.info(Component.literal("Reroll #" + cycles + " - no match.").withStyle(ChatFormatting.GRAY));
 	}
 
 	private static void printDecisionHint() {
@@ -419,7 +499,7 @@ public final class RerollSession {
 		return inventory.getItem(inventory.getSelectedSlot()).getItem() == workstation.asItem();
 	}
 
-	private int hotbarSlot(LocalPlayer player) {
+	private int inventorySlot(LocalPlayer player) {
 		Item item = workstation.asItem();
 		Inventory inventory = player.getInventory();
 
@@ -427,7 +507,7 @@ public final class RerollSession {
 			return inventory.getSelectedSlot();
 		}
 
-		for (int slot = 0; slot < Inventory.SELECTION_SIZE; slot++) {
+		for (int slot = 0; slot < Inventory.INVENTORY_SIZE; slot++) {
 			if (inventory.getItem(slot).getItem() == item) {
 				return slot;
 			}
@@ -441,6 +521,7 @@ public final class RerollSession {
 		phaseTicks = 0;
 
 		continueRequested = false;
+		dropHintShown = false;
 	}
 
 	private void abort(Component reason) {

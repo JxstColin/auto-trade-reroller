@@ -1,12 +1,14 @@
 # Auto Trade Reroller
 
 Client-side villager trade rerolling for Fabric. One command cycles a villager's job site
-block and prints the trades it rolled, then waits for you to decide whether to roll again.
+block and prints the trades it rolled, either pausing after every roll or running until it
+finds what you asked for.
 
 ## Usage
 
 ```
 /atr start <block>
+/atr start <block> want <enchantment|item> [level] [max <emeralds>]
 /atr stop
 ```
 
@@ -16,12 +18,15 @@ anything.
 
 Setup before starting:
 
-1. Put the job site block down **one block in front of you** (or simply look right at it).
+1. Put the job site block down **one block in front of you** (or simply look right at it),
+   close enough that you can pick the drop back up.
 2. Stand so the villager you want is **in front of you** - the crosshair picks it, so it
    stays unambiguous even in a crowd.
-3. Keep a spare copy of the block **in your hotbar**; it is what gets placed back.
+3. Keep a spare copy of the block **in your inventory**; it is what gets placed back.
 
-`/atr start lectern` then breaks the lectern, puts it back on the exact same position,
+### Manual mode
+
+`/atr start lectern` breaks the lectern, puts it back on the exact same position,
 right-clicks the villager, prints its first two trades, and stops there:
 
 ```
@@ -32,14 +37,44 @@ right-clicks the villager, prints its first two trades, and stops there:
 ```
 
 **F4** rolls again. **`/atr stop`** ends the loop and keeps whatever is on the villager
-right now. Nothing happens on its own, so leaving it sitting at the prompt is safe.
+right now. Nothing happens on its own, so leaving it sitting at the prompt is safe. F4 is
+rebindable under Options - Controls - Gameplay.
 
-F4 is rebindable under Options - Controls - Gameplay.
+### Wish mode
 
-The loop also stops on its own, with the reason in chat, when the villager wanders off,
-when you walk away from the job site block, when the block cannot be placed back, or when
-a step takes too long. Those checks are paused while it waits for your answer, so you can
-walk around and look at the trades in peace.
+Name what you are after and the loop runs on its own until it shows up, then stops:
+
+```
+/atr start lectern want efficiency 5
+/atr start lectern want efficiency 5 max 20
+/atr start lectern want mending
+/atr start lectern want diamond_pickaxe max 30
+```
+
+The wish argument takes an enchantment id or an item id, both tab-completed. A level means
+"that level or better" and only applies to enchantments. `max <emeralds>` caps what the
+trade may cost in emeralds; leave it out and any price counts.
+
+While hunting, each roll is one short line and F4 is not involved. On a hit you get the
+full trade list and the loop stops:
+
+```
+[ATR] Reroll #22 - no match.
+[ATR] Match after 23 rerolls! Librarian (level 1), stopped here.
+  1) 19x Emerald + 1x Book → 1x Enchanted Book (Efficiency V)
+  2) 24x Paper → 1x Emerald
+```
+
+The wish is checked against every trade the villager offers, not just the two that manual
+mode prints.
+
+## Picking the block back up
+
+The dropped block is looked for in your whole inventory, and pulled back into the hotbar if
+it landed in the backpack. If it drops somewhere you cannot reach, the loop does not give
+up - it says where the item is and waits until you have walked over and grabbed it, then
+carries on. `/atr start` warns you up front when you are standing far enough from the job
+site block that this is likely.
 
 ## Tools
 
@@ -57,6 +92,9 @@ hotbar slot is restored when the loop ends.
 - Placing aims at the block below the job site position first. If that neighbour is
   something right-clickable (a chest, a door), the placement click will open it instead -
   put the job site block on plain ground.
+- The loop stops on its own, with the reason in chat, when the villager wanders off, when
+  you walk away from the job site block, or when a step takes too long. Those checks are
+  paused while it waits for an F4.
 
 ## Setup
 
